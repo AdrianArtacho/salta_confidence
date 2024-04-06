@@ -1,29 +1,13 @@
-# README #
+# Confidence
 
-This README would normally document whatever steps are necessary to get your application up and running.
+I don't know exactly how (yet) but the idea is to calculate how confident we are in our dataset using different possible criteria...
 
-### What is this repository for? ###
+---
 
-* Quick summary
-* Version
-* [Learn Markdown](https://bitbucket.org/tutorials/markdowndemo)
+### Criteria
 
-### How do I get set up? ###
+One possible criterium could be, how aligned (or not) the different cuts/PDPlots are with one another:
 
-* Summary of set up
-* Configuration
-* Dependencies
-* Database configuration
-* How to run tests
-* Deployment instructions
-
-### Contribution guidelines ###
-
-* Writing tests
-* Code review
-* Other guidelines
-
-### Who do I talk to? ###
-
-* Repo owner or admin
-* Other community or team contact
+> If they are kinda aligned: we are confident in the data
+> 
+> If they are rather chaotic: we are *less* confident
