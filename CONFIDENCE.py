@@ -23,28 +23,18 @@ def normalise(y):
     return y / s if s > 0 else y
 
 def corr_to_sim(r):
-    # r in [-1,1] -> [0,1]
     if pd.isna(r):
         return 0.5
     return max(0.0, min(1.0, (r + 1.0) / 2.0))
 
 def dtw_to_sim(d, tau):
-    # d >= 0 -> (0,1]
     if pd.isna(d) or d < 0:
         return 0.0
     tau = max(float(tau), 1e-9)
     return float(np.exp(-d / tau))
 
 def plot_pairwise_overlay(
-    time,
-    p1,
-    p2,
-    name1,
-    name2,
-    corr,
-    dtw_dist,
-    agree,
-    outdir
+    time, p1, p2, name1, name2, corr, dtw_dist, agree, outdir
 ):
     plt.figure(figsize=(10, 4))
 
@@ -53,7 +43,7 @@ def plot_pairwise_overlay(
 
     plt.xlabel("Time")
     plt.ylabel("Probability density")
-    plt.title(f"{name1}  vs  {name2}")
+    plt.title(f"{name1} vs {name2}")
 
     txt = (
         f"corr = {corr:.2f}\n"
@@ -62,21 +52,17 @@ def plot_pairwise_overlay(
     )
 
     plt.text(
-        0.01, 0.98,
-        txt,
+        0.01, 0.98, txt,
         transform=plt.gca().transAxes,
-        verticalalignment="top",
+        va="top",
         fontsize=10,
         bbox=dict(boxstyle="round", facecolor="white", alpha=0.8)
     )
 
     plt.legend()
     plt.tight_layout()
-
-    fname = f"pair_{name1}__{name2}.png"
-    plt.savefig(os.path.join(outdir, fname))
+    plt.savefig(os.path.join(outdir, f"pair_{name1}__{name2}.png"))
     plt.close()
-
 
 # -------------------------------------------------
 # Load modality CSVs
@@ -94,45 +80,31 @@ for f in csv_files:
     print(f"Processing modality: {name}")
 
     df = pd.read_csv(f)
-
-    # Required columns
     df = df[["x_axis", "y_axis", "feature"]]
 
     # Load weights
     wfile = os.path.join(INPUT_DIR, f"weights_{name}.csv")
     if os.path.exists(wfile):
         wdf = pd.read_csv(wfile)
-        weights = dict(
-            zip(
-                wdf["feature_name"],
-                wdf["weight_value"]
-            )
-        )
+        weights = dict(zip(wdf["feature_name"], wdf["weight_value"]))
     else:
         weights = {}
 
-    # Pivot: rows=time, cols=features
     pivot = df.pivot(
         index="x_axis",
         columns="feature",
         values="y_axis"
     ).fillna(0)
 
-    # Apply weights
     weighted = pivot.copy()
     for col in weighted.columns:
         weighted[col] *= weights.get(col, 1.0)
 
-    # Modality PDF (raw, weighted, normalised)
     pdf = normalise(weighted.sum(axis=1).values)
     time = weighted.index.values
 
-    modalities[name] = {
-        "time": time,
-        "pdf": pdf
-    }
+    modalities[name] = {"time": time, "pdf": pdf}
 
-    # Save per-modality plot
     plt.figure(figsize=(8, 3))
     plt.plot(time, pdf, linewidth=2)
     plt.title(name)
@@ -141,7 +113,7 @@ for f in csv_files:
     plt.close()
 
 # -------------------------------------------------
-# Cross-modality comparisons
+# Cross-modality comparisons (INTERPOLATED)
 # -------------------------------------------------
 
 results = []
@@ -151,27 +123,29 @@ for i in range(len(keys)):
     for j in range(i + 1, len(keys)):
         m1, m2 = keys[i], keys[j]
 
-        t1 = modalities[m1]["time"]
-        t2 = modalities[m2]["time"]
-        print(f"\nDEBUG {m1} vs {m2}")
-        print(f"{m1}: dtype={t1.dtype}, min={t1.min()}, max={t1.max()}, len={len(t1)}")
-        print(f"{m2}: dtype={t2.dtype}, min={t2.min()}, max={t2.max()}, len={len(t2)}")
+        t1, p1 = modalities[m1]["time"], modalities[m1]["pdf"]
+        t2, p2 = modalities[m2]["time"], modalities[m2]["pdf"]
 
-        common_t = np.intersect1d(t1, t2)
-        print(f"common_t: min={common_t.min()}, max={common_t.max()}, len={len(common_t)}")
+        t_min = max(t1.min(), t2.min())
+        t_max = min(t1.max(), t2.max())
 
-        if len(common_t) < 10:
+        if t_max <= t_min:
             continue
 
-        def extract(mod):
-            idx = np.isin(modalities[mod]["time"], common_t)
-            return modalities[mod]["pdf"][idx]
+        # reference grid = denser modality
+        if len(t1) >= len(t2):
+            t_ref = t1[(t1 >= t_min) & (t1 <= t_max)]
+        else:
+            t_ref = t2[(t2 >= t_min) & (t2 <= t_max)]
 
-        p1 = extract(m1)
-        p2 = extract(m2)
+        if len(t_ref) < 10:
+            continue
 
-        corr = np.corrcoef(p1, p2)[0, 1]
-        dtw_dist = dtw(p1, p2)
+        p1i = np.interp(t_ref, t1, p1)
+        p2i = np.interp(t_ref, t2, p2)
+
+        corr = np.corrcoef(p1i, p2i)[0, 1]
+        dtw_dist = dtw(p1i, p2i)
 
         results.append({
             "modality_A": m1,
@@ -180,9 +154,7 @@ for i in range(len(keys)):
             "dtw": dtw_dist,
         })
 
-
 metrics_df = pd.DataFrame(results)
-
 metrics_df.to_csv(
     os.path.join(OUTPUT_DIR, "modality_internal_consistency.csv"),
     index=False
@@ -198,38 +170,33 @@ if not metrics_df.empty:
         tau = 1.0
 
     for _, row in metrics_df.iterrows():
-        m1 = row["modality_A"]
-        m2 = row["modality_B"]
+        m1, m2 = row["modality_A"], row["modality_B"]
 
-        t1 = modalities[m1]["time"]
-        t2 = modalities[m2]["time"]
-        common_t = np.intersect1d(t1, t2)
+        t1, p1 = modalities[m1]["time"], modalities[m1]["pdf"]
+        t2, p2 = modalities[m2]["time"], modalities[m2]["pdf"]
 
-        idx1 = np.isin(t1, common_t)
-        idx2 = np.isin(t2, common_t)
+        t_min = max(t1.min(), t2.min())
+        t_max = min(t1.max(), t2.max())
 
-        p1 = modalities[m1]["pdf"][idx1]
-        p2 = modalities[m2]["pdf"][idx2]
+        if len(t1) >= len(t2):
+            t_ref = t1[(t1 >= t_min) & (t1 <= t_max)]
+        else:
+            t_ref = t2[(t2 >= t_min) & (t2 <= t_max)]
 
-        s_corr = corr_to_sim(row["corr"])
-        s_dtw = dtw_to_sim(row["dtw"], tau)
-        agree = 0.5 * s_corr + 0.5 * s_dtw
+        p1i = np.interp(t_ref, t1, p1)
+        p2i = np.interp(t_ref, t2, p2)
+
+        agree = 0.5 * corr_to_sim(row["corr"]) + 0.5 * dtw_to_sim(row["dtw"], tau)
 
         plot_pairwise_overlay(
-            time=common_t,
-            p1=p1,
-            p2=p2,
-            name1=m1,
-            name2=m2,
-            corr=row["corr"],
-            dtw_dist=row["dtw"],
-            agree=agree,
-            outdir=OUTPUT_DIR
+            t_ref, p1i, p2i,
+            m1, m2,
+            row["corr"], row["dtw"], agree,
+            OUTPUT_DIR
         )
 
-
 # -------------------------------------------------
-# Confidence score (RAW ONLY)
+# Confidence score (RAW, INTERPOLATED)
 # -------------------------------------------------
 
 def compute_confidence(df, lam=0.5):
@@ -250,7 +217,7 @@ def compute_confidence(df, lam=0.5):
 
     return 100.0 * float(np.mean(sims))
 
-confidence = compute_confidence(metrics_df, lam=0.5)
+confidence = compute_confidence(metrics_df)
 
 summary = pd.DataFrame([{
     "confidence_0_100": confidence,
