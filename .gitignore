@@ -48,3 +48,10 @@ Thumbs.db
 *.mov
 *.wmv
 
+# File Structure
+
+INPUT/*
+!INPUT/.gitkeep
+
+OUTPUT/*
+!OUTPUT/.gitkeep
