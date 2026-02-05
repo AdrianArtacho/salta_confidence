@@ -19,6 +19,17 @@ MIN_POINTS = 10
 parser = argparse.ArgumentParser(description="Modality-level confidence (memory-safe)")
 parser.add_argument("--dtw-downsample", type=int, default=1,
                     help="Downsample factor for DTW (>=1)")
+parser.add_argument(
+    "--global-plot",
+    action="store_true",
+    help="Generate global overlay plot of all modalities"
+)
+
+parser.add_argument(
+    "--no-normalize",
+    action="store_true",
+    help="Plot raw (unnormalised) PDFs as well"
+)
 args = parser.parse_args()
 
 DS = max(1, args.dtw_downsample)
@@ -40,6 +51,51 @@ def corr_to_sim(r):
 
 def dtw_to_sim(d, tau):
     return np.exp(-d / tau)
+
+# ---------------- GLOBAL PLOT HELPER
+def plot_global_overlay(modalities, outdir, normalised=True):
+    """
+    modalities: dict {name: (time, pdf)}
+    """
+    # shared time grid
+    t_min = max(t.min() for t, _ in modalities.values())
+    t_max = min(t.max() for t, _ in modalities.values())
+
+    ref_name = max(modalities, key=lambda k: len(modalities[k][0]))
+    t_ref = modalities[ref_name][0]
+    t_ref = t_ref[(t_ref >= t_min) & (t_ref <= t_max)]
+
+    plt.figure(figsize=(10, 4))
+
+    stack = []
+
+    for name, (t, p) in modalities.items():
+        pi = np.interp(t_ref, t, p)
+        if normalised:
+            pi = pi / np.sum(pi) if np.sum(pi) > 0 else pi
+        stack.append(pi)
+
+        plt.plot(t_ref, pi, alpha=0.6, linewidth=1.8, label=name)
+
+    # mean profile
+    mean_pdf = np.mean(stack, axis=0)
+    plt.plot(t_ref, mean_pdf, color="black", linewidth=3, label="mean")
+
+    plt.xlabel("Time")
+    plt.ylabel("Probability density")
+    title = "Global modality overlay"
+    title += " (normalised)" if normalised else " (raw)"
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+
+    suffix = "norm" if normalised else "raw"
+    outfile = os.path.join(outdir, f"global_overlay_{suffix}.png")
+    plt.savefig(outfile, dpi=200)
+    plt.close()
+
+    print(f"✓ written {outfile}")
+
 
 # ---------------- PROJECT SELECTION ----------------
 
@@ -94,6 +150,14 @@ for csv in glob.glob(os.path.join(P_IN, "*.csv")):
 
     del df, pivot
     gc.collect()
+
+# ---------------- GLOBAL OVERLAY PLOT ----------------
+if args.global_plot and len(modalities) > 1:
+    plot_global_overlay(modalities, P_OUT, normalised=True)
+
+    if not args.no_normalize:
+        plot_global_overlay(modalities, P_OUT, normalised=False)
+
 
 # ---------------- PAIRWISE MODALITY CONSISTENCY ----------------
 
