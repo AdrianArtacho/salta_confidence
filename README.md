@@ -7,7 +7,7 @@ pipeline.
 Rather than evaluating segmentation results against an external ground truth, these tools
 quantify the **degree of convergence between multiple, independently derived temporal data
 streams** (modalities and features). The resulting confidence values characterise how strongly
-different sources of evidence support similar temporal structures.
+different sources of evidence support similar **temporal event structures**.
 
 The repository is intended for **analysis, diagnostics, and documentation** within artistic
 research and choreomusical performance contexts.
@@ -22,13 +22,16 @@ The core idea is simple:
 - Features are combined into **modality-level probability density functions (PDFs)**.
 - Agreement is evaluated:
   - **across modalities** (modality-level consistency)
-  - **within modalities** (feature-level consistency, optional)
+  - **within modalities** (feature-level consistency, diagnostic)
 - A numerical **confidence score (0–100)** summarises cross-modal convergence.
 
-Importantly:
+Key principles:
+
 - No modality is treated as privileged.
-- No assumption of a single “correct” temporal structure is made.
+- No assumption of a single “correct” segmentation is made.
 - Confidence expresses **internal agreement**, not correctness.
+- Alignment is understood primarily as **temporal coincidence of salient events**, not
+  similarity of amplitude or signal shape.
 
 ---
 
@@ -36,10 +39,11 @@ Importantly:
 
 ```text
 .
-├── CONFIDENCE.py          # Main analysis script (CLI, interactive)
-├── FEATURE_HEATMAP.py     # Visualisation of feature-level consistency
-├── INPUT/                # Project folders (one folder = one dataset)
-├── OUTPUT/               # Generated results (mirrors input structure)
+├── confidence_modality.py     # Modality-level confidence + global plots
+├── confidence_features.py     # Feature-level consistency + heatmaps
+├── MODALITY_HEATMAP.py        # Modality agreement heatmaps (from CSV)
+├── INPUT/                     # Project folders (one folder = one dataset)
+├── OUTPUT/                    # Generated results (mirrors input structure)
 └── README.md
 ````
 
@@ -47,7 +51,7 @@ Importantly:
 
 ## Input Data Structure
 
-The script expects **project-based organisation**:
+All scripts expect **project-based organisation**:
 
 ```text
 INPUT/
@@ -64,6 +68,10 @@ INPUT/
 │   ├── weights_video.csv
 ```
 
+Each project is processed independently.
+
+---
+
 ### Modality CSV format
 
 Each modality CSV must contain at least the following columns:
@@ -73,6 +81,8 @@ Each modality CSV must contain at least the following columns:
 * `feature` – feature identifier (string)
 
 Additional columns (e.g. `tuples`) are ignored.
+
+---
 
 ### Weights CSV format
 
@@ -86,22 +96,23 @@ Weights determine the contribution of individual features when constructing moda
 
 ---
 
-## Main Script: `CONFIDENCE.py`
+## Script 1: `confidence_modality.py`
 
 ### What it does
 
-`CONFIDENCE.py` computes:
+`confidence_modality.py` computes **modality-level internal consistency**:
 
-1. **Modality-level PDFs** (weighted feature aggregation)
-2. **Cross-modality agreement**, using:
+1. Weighted **modality PDFs**
+2. Pairwise **cross-modality agreement**, using:
 
-   * Pearson correlation
-   * Dynamic Time Warping (DTW)
-3. A **global confidence score (0–100)** summarising cross-modal consistency
-4. **Pairwise overlay plots** explaining agreement visually
-5. *(Optional)* **Feature-level internal consistency** within each modality
+   * Pearson correlation (strict simultaneity)
+   * Dynamic Time Warping (elastic temporal correspondence)
+3. A **global confidence score (0–100)**
+4. **Pairwise overlay plots** (diagnostic / explanatory)
+5. *(Optional)* **global overlay plots** across all modalities
+6. *(Optional)* **raw vs normalised** global representations
 
-All comparisons are performed on **interpolated shared time grids** to avoid sampling artefacts.
+All comparisons are performed on **shared interpolated time grids** to avoid sampling artefacts.
 No temporal smoothing is applied at the modality-PDF level.
 
 ---
@@ -111,116 +122,175 @@ No temporal smoothing is applied at the modality-PDF level.
 From the repository root:
 
 ```bash
-python CONFIDENCE.py
+python confidence_modality.py
 ```
 
 You will be prompted to select a project folder from `INPUT/`.
 
-#### Optional: feature-level consistency (slow)
+---
+
+### Important CLI options
 
 ```bash
-python CONFIDENCE.py --features
+--dtw-downsample N
 ```
 
-This enables feature–feature comparisons within each modality.
-Because DTW is computationally expensive, this step is disabled by default.
+Downsample factor applied **only to DTW** (strongly recommended for long recordings).
+
+Typical values:
+
+* `50–100` for long performances
+* `10–20` for shorter excerpts
+
+```bash
+--global-plot
+```
+
+Generate **global overlay plots** showing all modalities together.
+
+```bash
+--no-normalize
+```
+
+Also generate **raw (unnormalised)** global overlay plots in addition to the normalised version.
 
 ---
 
-### Terminal feedback
+### Example
 
-The script provides continuous, flushed terminal output, including:
-
-* project selection
-* modality loading
-* modality-pair progress
-* feature-pair DTW progress (throttled)
-* timing information for long-running steps
-
-This ensures the user always knows what is being processed.
+```bash
+python confidence_modality.py \
+  --dtw-downsample 100 \
+  --global-plot
+```
 
 ---
 
-### Output structure
-
-For a project called `project_A`, results are written to:
+### Output (example)
 
 ```text
 OUTPUT/project_A/
 ├── AUDIO_pdf.png
 ├── MPIPE_pdf.png
 ├── pair_AUDIO__MPIPE.png
+├── global_overlay_norm.png
+├── global_overlay_raw.png
 ├── modality_internal_consistency.csv
-├── confidence_summary.csv
-├── feature_internal_consistency_AUDIO.csv        (optional)
-├── feature_internal_consistency_MPIPE.csv        (optional)
-└── feature_consistency_summary.csv               (optional)
+└── confidence_summary.csv
 ```
 
 ---
 
-### Output files explained
+## Script 2: `confidence_features.py`
 
-* `*_pdf.png`
-  Modality-level probability density functions
+### What it does
 
-* `pair_*__*.png`
-  Pairwise modality overlay plots with correlation, DTW, and agreement score
+`confidence_features.py` computes **feature-level internal consistency within each modality**.
+This analysis is **diagnostic** and intended to reveal:
 
-* `modality_internal_consistency.csv`
-  Pairwise modality metrics (corr, DTW)
+* redundant or highly similar features
+* coherent feature clusters
+* idiosyncratic or weakly aligned features
 
-* `confidence_summary.csv`
-  Global modality-level confidence (0–100)
-
-* `feature_internal_consistency_*.csv`
-  Feature–feature metrics within a modality (optional)
+It also **automatically generates heat maps** from the computed tables.
 
 ---
 
-## Feature Heat Maps: `FEATURE_HEATMAP.py`
+### Running the script
 
-This script visualises **feature-level internal consistency** using heat maps.
+```bash
+python confidence_features.py
+```
 
-It is intentionally separated from the main pipeline to keep analysis and visualisation decoupled.
+You will be prompted to select a project folder from `INPUT/`.
+
+---
+
+### Important CLI options
+
+```bash
+--dtw-downsample N
+```
+
+Downsample factor for feature-level DTW.
+
+Recommended values:
+
+* `2–5` for high-frequency features
+* `5–10` for smoother features
+
+```bash
+--lambda-corr 0.5
+```
+
+Weight of correlation vs DTW when computing combined agreement.
+
+---
+
+### Example
+
+```bash
+python confidence_features.py \
+  --dtw-downsample 5 \
+  --lambda-corr 0.5
+```
+
+---
+
+### Output (example)
+
+```text
+OUTPUT/project_A/
+├── feature_internal_consistency_AUDIO.csv
+├── feature_internal_consistency_AUDIO_heatmap_corr.png
+├── feature_internal_consistency_AUDIO_heatmap_dtw.png
+├── feature_internal_consistency_AUDIO_heatmap_agree.png
+```
+
+---
+
+## Script 3: `MODALITY_HEATMAP.py`
+
+This script visualises **cross-modality agreement** using heat maps.
+It operates purely on previously generated CSV files.
 
 ---
 
 ### Usage
 
 ```bash
-python FEATURE_HEATMAP.py \
-    OUTPUT/project_A/feature_internal_consistency_MPIPE.csv
+python MODALITY_HEATMAP.py \
+  OUTPUT/project_A/modality_internal_consistency.csv
 ```
 
 Optional arguments:
 
 ```bash
---metric corr     # correlation-based similarity
---metric dtw      # DTW-based similarity
---metric agree    # combined agreement (default)
-
---lambda_corr 0.5 # weight for correlation in combined agreement
---out PATH        # output directory
+--lambda-corr 0.5
 ```
 
 ---
 
 ### Output
 
-The script generates a symmetric **feature × feature heat map**:
-
 ```text
-feature_internal_consistency_MPIPE_heatmap_agree.png
+OUTPUT/project_A/
+├── modality_heatmap_corr.png
+├── modality_heatmap_dtw.png
+└── modality_heatmap_agree.png
 ```
 
-Values range from 0 (low agreement) to 1 (high agreement).
+These figures summarise **which modalities agree most strongly** with one another.
 
-These plots reveal:
+---
 
-* clusters of mutually coherent features
-* idiosyncratic or weakly aligned features
-* internal structure within a modality
+## Normalised vs Raw Representations
+
+* **Normalised PDFs** emphasise *temporal alignment* and are used for confidence computation.
+* **Raw PDFs** preserve expressive magnitude and are useful for interpretive comparison.
+
+Both are supported to clearly separate **structural agreement** from **modality-specific
+expressivity**.
 
 ---
 
@@ -231,18 +301,20 @@ These tools form the **evaluation and diagnostic layer** of the SALTA pipeline:
 * upstream stages handle feature extraction, smoothing, and weighting
 * this repository evaluates **structural convergence** across those outputs
 
-The confidence metric complements other measures such as EWMA-based smoothness by addressing a
-different analytical question: **inter-stream agreement rather than intra-stream regularity**.
+The confidence metric complements EWMA-based smoothness measures by addressing a different
+analytical question: **inter-stream agreement rather than intra-stream regularity**.
 
 ---
 
-## Notes on Performance
+## Notes on Performance & Robustness
 
 * Modality-level analysis is fast and intended for routine use.
-* Feature-level DTW analysis can be slow for large feature sets.
+* Feature-level DTW analysis can be computationally heavy:
 
-  * It is therefore optional (`--features`).
-  * A configurable cap limits DTW computations per modality.
+  * downsampling is strongly recommended
+  * results are typically stable across reasonable downsampling factors
+* Stability under downsampling indicates that metrics capture **event-level structure**
+  rather than sampling artefacts.
 
 ---
 
@@ -256,8 +328,8 @@ It is provided for research, documentation, and educational purposes.
 ## Contact
 
 For questions related to SALTA, distributed performance, or choreomusical segmentation,
-please contact the repository author.
+please contact the repository [author](www.artacho.at).
 
 ---
 
-## [:memo:To-Do](https://trello.com/c/mWuPbiPu/124-confidence)
+## [:memo: To-Do](https://trello.com/c/mWuPbiPu/124-confidence)
