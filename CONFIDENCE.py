@@ -129,6 +129,12 @@ print(
 
 subprocess.run(cmd_heatmap)
 
+print(
+    "\n=== [3/3] Feature-level consistency ===\n"
+    "NOTE: Feature heatmaps will be generated automatically."
+)
+
+
 # 3. Feature-level consistency
 cmd_features = [
     sys.executable,
