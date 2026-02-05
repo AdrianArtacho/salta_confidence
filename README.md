@@ -257,3 +257,7 @@ It is provided for research, documentation, and educational purposes.
 
 For questions related to SALTA, distributed performance, or choreomusical segmentation,
 please contact the repository author.
+
+---
+
+## [:memo:To-Do](https://trello.com/c/mWuPbiPu/124-confidence)
