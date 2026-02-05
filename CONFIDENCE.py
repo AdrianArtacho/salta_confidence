@@ -19,6 +19,12 @@ parser.add_argument("--global-plot", action="store_true")
 parser.add_argument("--no-normalize", action="store_true")
 parser.add_argument("--skip-modality-heatmaps", action="store_true")
 parser.add_argument("--skip-features", action="store_true")
+parser.add_argument(
+    "--project",
+    type=str,
+    help="Project name (skip interactive selection)"
+)
+
 
 args = parser.parse_args()
 
@@ -36,21 +42,32 @@ projects = [
 if not projects:
     raise RuntimeError("No projects found in INPUT/")
 
-print("\nAvailable projects:")
-for i, p in enumerate(projects, 1):
-    print(f"[{i}] {p}")
+if args.project:
+    if args.project not in projects:
+        raise ValueError(
+            f"Project '{args.project}' not found. "
+            f"Available projects: {projects}"
+        )
+    project = args.project
+    print(f"[PIPELINE] Using project (CLI): {project}")
+else:
+    print("\nAvailable projects:")
+    for i, p in enumerate(projects, 1):
+        print(f"[{i}] {p}")
 
-while True:
-    try:
-        idx = int(input("Select project: ")) - 1
-        if 0 <= idx < len(projects):
-            project = projects[idx]
-            break
-    except ValueError:
-        pass
-    print("Invalid selection.")
+    while True:
+        try:
+            idx = int(input("Select project: ")) - 1
+            if 0 <= idx < len(projects):
+                project = projects[idx]
+                break
+        except ValueError:
+            pass
+        print("Invalid selection.")
 
-print(f"\n[PIPELINE] Using project: {project}")
+    print(f"[PIPELINE] Using project (interactive): {project}")
+
+
 
 def run(cmd, label):
     print(f"\n=== {label} ===")
