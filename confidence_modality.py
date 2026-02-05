@@ -30,6 +30,13 @@ parser.add_argument(
     action="store_true",
     help="Plot raw (unnormalised) PDFs as well"
 )
+
+parser.add_argument(
+    "--project",
+    type=str,
+    help="Project name (skip interactive selection)"
+)
+
 args = parser.parse_args()
 
 DS = max(1, args.dtw_downsample)
@@ -113,6 +120,11 @@ P_OUT = os.path.join(OUTPUT_DIR, project)
 os.makedirs(P_OUT, exist_ok=True)
 
 log(f"\nProcessing project: {project}")
+
+# added
+with open(os.path.join("OUTPUT", "_last_project.txt"), "w") as f:
+    f.write(project)
+
 
 # ---------------- LOAD MODALITY PDFs ONLY ----------------
 
