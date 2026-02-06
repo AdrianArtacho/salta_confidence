@@ -5,14 +5,19 @@
 <title>3D Modality Agreement</title>
 
 <style>
-  body { margin: 0; overflow: hidden; background: #111; color: #eee; }
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: #111;
+    color: #eee;
+    font-family: sans-serif;
+  }
   #ui {
     position: absolute;
     bottom: 20px;
     left: 50%;
     transform: translateX(-50%);
     width: 80%;
-    font-family: sans-serif;
   }
   #timeLabel {
     text-align: center;
@@ -69,27 +74,29 @@ const originalPositions = {};
 let rows = [], timeValues = [], pairKeys = [], modalities = [];
 let focused = null;
 
-// layout + interaction
+// layout
 const SPHERE_RADIUS = 2.6;
 const FOCUS_DEPTH = 3.0;
-const ANIM_SPEED = 0.08;
 
+// animation
+const ANIM_SPEED = 0.08;
 const targetQuat = new THREE.Quaternion();
 const targetPos  = new THREE.Vector3();
 const IDENTITY_QUAT = new THREE.Quaternion();
 
+// edge thickness
+const EDGE_MIN = 0.02;
+const EDGE_MAX = 0.22;   // ≈ node radius
+
 /* ============================================================
-   Load CSV (with fallback)
+   Load CSV (fallback-safe)
 ============================================================ */
 
 fetch("modality_agreement_timeseries.csv")
-  .then(r => {
-    if (!r.ok) throw new Error("CSV not found");
-    return r.text();
-  })
-  .then(text => parseCSV(text))
-  .catch(() => generateDummyData())
-  .finally(() => init());
+  .then(r => r.ok ? r.text() : Promise.reject())
+  .then(parseCSV)
+  .catch(generateDummyData)
+  .finally(init);
 
 function parseCSV(text) {
   const lines = text.trim().split("\n");
@@ -117,7 +124,7 @@ function generateDummyData() {
 
 function init() {
 
-  /* ---------- Nodes (spherical layout) ---------- */
+  /* ---------- Nodes (Fibonacci sphere) ---------- */
   modalities.forEach((name, i) => {
     const n = modalities.length;
     const phi = Math.acos(1 - 2 * (i + 0.5) / n);
@@ -130,7 +137,7 @@ function init() {
     );
 
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.22, 20, 20),
+      new THREE.SphereGeometry(0.22, 24, 24),
       new THREE.MeshBasicMaterial({ color: 0xffffff })
     );
 
@@ -141,21 +148,17 @@ function init() {
     originalPositions[name] = pos.clone();
   });
 
-  /* ---------- Edges ---------- */
+  /* ---------- Edges (cylinders) ---------- */
   pairKeys.forEach(k => {
-    const [a, b] = k.split("__");
-    const geom = new THREE.BufferGeometry().setFromPoints([
-      nodes[a].position,
-      nodes[b].position
-    ]);
-    const mat = new THREE.LineBasicMaterial({
+    const mat = new THREE.MeshBasicMaterial({
       color: 0x66ccff,
       transparent: true,
       opacity: 0.15
     });
-    const line = new THREE.Line(geom, mat);
-    group.add(line);
-    edges[k] = line;
+    const geom = new THREE.CylinderGeometry(1, 1, 1, 12);
+    const mesh = new THREE.Mesh(geom, mat);
+    group.add(mesh);
+    edges[k] = mesh;
   });
 
   targetQuat.copy(IDENTITY_QUAT);
@@ -209,6 +212,23 @@ function toggleFocus(name) {
 }
 
 /* ============================================================
+   Edge geometry update
+============================================================ */
+
+function updateEdgeCylinder(edge, p1, p2, thickness) {
+  const dir = new THREE.Vector3().subVectors(p2, p1);
+  const len = dir.length();
+
+  edge.position.copy(p1).add(p2).multiplyScalar(0.5);
+  edge.scale.set(thickness, len * 0.5, thickness);
+
+  edge.quaternion.setFromUnitVectors(
+    new THREE.Vector3(0, 1, 0),
+    dir.normalize()
+  );
+}
+
+/* ============================================================
    Time / Edge updates
 ============================================================ */
 
@@ -224,10 +244,25 @@ function updateEdges(t) {
 
   pairKeys.forEach(k => {
     const v = rows[idx]?.[k];
-    const e = edges[k];
-    if (!isFinite(v)) { e.visible = false; return; }
-    e.visible = true;
-    e.material.opacity = 0.1 + 0.8 * v;
+    const edge = edges[k];
+
+    if (!isFinite(v)) {
+      edge.visible = false;
+      return;
+    }
+
+    edge.visible = true;
+
+    const [a, b] = k.split("__");
+    const p1 = nodes[a].position;
+    const p2 = nodes[b].position;
+
+    // strong thickness mapping
+    const thickness =
+      EDGE_MIN + Math.pow(v, 1.6) * (EDGE_MAX - EDGE_MIN);
+
+    updateEdgeCylinder(edge, p1, p2, thickness);
+    edge.material.opacity = 0.15 + 0.85 * v;
   });
 }
 
@@ -251,7 +286,6 @@ function setupUI() {
 function animate() {
   requestAnimationFrame(animate);
 
-  // gentle idle rotation (optional)
   if (!focused) group.rotation.y += 0.002;
 
   group.quaternion.slerp(targetQuat, ANIM_SPEED);
