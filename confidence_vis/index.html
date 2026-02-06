@@ -48,10 +48,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x111111);
 
 const camera = new THREE.PerspectiveCamera(
-  70,
-  window.innerWidth / window.innerHeight,
-  0.1,
-  100
+  70, window.innerWidth / window.innerHeight, 0.1, 100
 );
 camera.position.set(0, 0, 7);
 
@@ -80,8 +77,21 @@ const originalPositions = {};
 
 let focused = null;
 
+// layout + depth
 const SPHERE_RADIUS = 2.6;
 const FOCUS_DEPTH = 3.0;
+const RADIAL_SPREAD = 0.8;
+
+// scaling
+const SCALE_FOCUS = 2.8;
+const SCALE_FAR = 0.4;
+
+// animation
+const ANIM_SPEED = 0.08;
+
+/* animation state */
+let targetQuat = new THREE.Quaternion();
+let targetPos = new THREE.Vector3();
 
 /* ============================================================
    Load CSV
@@ -110,20 +120,16 @@ fetch("modality_agreement_timeseries.csv")
 
 function init() {
 
-  /* ---------- Nodes: spherical (Fibonacci) distribution ---------- */
-
   modalities.forEach((name, i) => {
     const n = modalities.length;
-
-    // Fibonacci / golden-angle sphere
     const phi = Math.acos(1 - 2 * (i + 0.5) / n);
     const theta = Math.PI * (1 + Math.sqrt(5)) * i;
 
-    const x = SPHERE_RADIUS * Math.sin(phi) * Math.cos(theta);
-    const y = SPHERE_RADIUS * Math.sin(phi) * Math.sin(theta);
-    const z = SPHERE_RADIUS * Math.cos(phi);
-
-    const pos = new THREE.Vector3(x, y, z);
+    const pos = new THREE.Vector3(
+      SPHERE_RADIUS * Math.sin(phi) * Math.cos(theta),
+      SPHERE_RADIUS * Math.sin(phi) * Math.sin(theta),
+      SPHERE_RADIUS * Math.cos(phi)
+    );
 
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.22, 20, 20),
@@ -131,32 +137,31 @@ function init() {
     );
 
     mesh.position.copy(pos);
+    mesh.scale.setScalar(1);
     group.add(mesh);
 
     nodes[name] = mesh;
     originalPositions[name] = pos.clone();
   });
 
-  /* ---------- Edges ---------- */
-
   pairKeys.forEach(k => {
     const [a, b] = k.split("__");
-
     const geom = new THREE.BufferGeometry().setFromPoints([
       nodes[a].position,
       nodes[b].position
     ]);
-
     const mat = new THREE.LineBasicMaterial({
       color: 0x66ccff,
       transparent: true,
       opacity: 0.15
     });
-
     const line = new THREE.Line(geom, mat);
     group.add(line);
     edges[k] = line;
   });
+
+  targetQuat.copy(group.quaternion);
+  targetPos.copy(group.position);
 
   setupUI();
   setupPicking();
@@ -165,7 +170,7 @@ function init() {
 }
 
 /* ============================================================
-   Interaction (Picking)
+   Picking
 ============================================================ */
 
 function setupPicking() {
@@ -175,8 +180,8 @@ function setupPicking() {
   window.addEventListener("click", e => {
     mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-
     ray.setFromCamera(mouse, camera);
+
     const hits = ray.intersectObjects(Object.values(nodes));
     if (!hits.length) return;
 
@@ -188,7 +193,7 @@ function setupPicking() {
 }
 
 /* ============================================================
-   Focus logic (TRUE 3D, group-based)
+   Focus logic (animated + anti-occlusion)
 ============================================================ */
 
 function toggleFocus(name) {
@@ -202,33 +207,38 @@ function toggleFocus(name) {
 }
 
 function focusOn(name) {
-
-  const target = originalPositions[name].clone().normalize();
-
-  // rotate group so target points toward camera
+  const center = originalPositions[name].clone().normalize();
   const forward = new THREE.Vector3(0, 0, 1);
-  const q = new THREE.Quaternion().setFromUnitVectors(target, forward);
-  group.quaternion.copy(q);
 
-  // move whole structure backward so focused node is closer
-  group.position.set(0, 0, -FOCUS_DEPTH);
+  targetQuat.setFromUnitVectors(center, forward);
+  targetPos.set(0, 0, -FOCUS_DEPTH);
 
-  updateEdgeGeometry();
+  modalities.forEach(m => {
+    const node = nodes[m];
+    const dir = originalPositions[m].clone().normalize();
+    const angle = dir.angleTo(center);
+
+    const spread = RADIAL_SPREAD * angle;
+    node.userData.targetScale =
+      (m === name) ? SCALE_FOCUS : Math.max(SCALE_FAR, 1 - spread);
+  });
 }
 
 function resetView() {
-  group.quaternion.identity();
-  group.position.set(0, 0, 0);
-  updateEdgeGeometry();
+  targetQuat.identity();
+  targetPos.set(0, 0, 0);
+
+  modalities.forEach(m => {
+    nodes[m].userData.targetScale = 1.0;
+  });
 }
 
 /* ============================================================
-   Time-dependent edge updates
+   Time updates
 ============================================================ */
 
 function updateEdges(t) {
   let idx = 0, best = Infinity;
-
   for (let i = 0; i < timeValues.length; i++) {
     const d = Math.abs(timeValues[i] - t);
     if (d < best) { best = d; idx = i; }
@@ -246,31 +256,25 @@ function updateEdges(t) {
   });
 }
 
-function updateEdgeGeometry() {
-  pairKeys.forEach(k => {
-    const [a, b] = k.split("__");
-    edges[k].geometry.setFromPoints([
-      nodes[a].position,
-      nodes[b].position
-    ]);
-    edges[k].geometry.attributes.position.needsUpdate = true;
-  });
-}
-
 /* ============================================================
-   UI & render loop
+   Animation loop
 ============================================================ */
-
-function setupUI() {
-  const s = document.getElementById("timeSlider");
-  s.min = timeValues[0];
-  s.max = timeValues[timeValues.length - 1];
-  s.step = (s.max - s.min) / 1000;
-  s.addEventListener("input", () => updateEdges(parseFloat(s.value)));
-}
 
 function animate() {
   requestAnimationFrame(animate);
+
+  group.quaternion.slerp(targetQuat, ANIM_SPEED);
+  group.position.lerp(targetPos, ANIM_SPEED);
+
+  modalities.forEach(m => {
+    const node = nodes[m];
+    const ts = node.userData.targetScale || 1.0;
+    node.scale.lerp(
+      new THREE.Vector3(ts, ts, ts),
+      ANIM_SPEED
+    );
+  });
+
   renderer.render(scene, camera);
 }
 </script>
