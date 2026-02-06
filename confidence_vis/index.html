@@ -215,7 +215,7 @@ function toggleFocus(name) {
 }
 
 /* ============================================================
-   Edge geometry update (surface-to-surface)
+   Edge geometry update (CORRECT, no gaps)
 ============================================================ */
 
 function updateEdgeCylinder(edge, p1, p2, thickness) {
@@ -230,13 +230,17 @@ function updateEdgeCylinder(edge, p1, p2, thickness) {
   const usableLen = fullLen - 2 * NODE_RADIUS;
   dir.normalize();
 
+  // midpoint between node surfaces
   const mid = new THREE.Vector3()
     .copy(p1)
     .addScaledVector(dir, NODE_RADIUS + usableLen / 2);
 
   edge.position.copy(mid);
-  edge.scale.set(thickness, usableLen * 0.5, thickness);
 
+  // IMPORTANT: scale.y = FULL usable length
+  edge.scale.set(thickness, usableLen, thickness);
+
+  // orient cylinder (local Y → direction)
   edge.quaternion.setFromUnitVectors(
     new THREE.Vector3(0, 1, 0),
     dir
