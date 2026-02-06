@@ -68,7 +68,6 @@ const camera = new THREE.PerspectiveCamera(
   70, window.innerWidth / window.innerHeight, 0.1, 100
 );
 camera.position.set(0, 0, 7);
-camera.lookAt(0, 0, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -88,6 +87,7 @@ const group = new THREE.Group();
 scene.add(group);
 
 const nodes = {};
+const labels = {};
 const edges = {};
 const originalPositions = {};
 
@@ -115,9 +115,38 @@ const IDENTITY_QUAT = new THREE.Quaternion();
 let currentTime = 0;
 let isPlaying = false;
 let direction = 1;
+const playSpeed = 1.0;   // real seconds / second
 
-// IMPORTANT: playSpeed is now REAL seconds per second
-const playSpeed = 1.0;   // 1.0 = real time
+/* ============================================================
+   Label helper
+============================================================ */
+
+function makeLabel(text) {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  const size = 256;
+  canvas.width = size;
+  canvas.height = size;
+
+  ctx.clearRect(0, 0, size, size);
+  ctx.font = "48px sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = "#ffffff";
+  ctx.fillText(text, size / 2, size / 2);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.minFilter = THREE.LinearFilter;
+
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true
+  });
+
+  const sprite = new THREE.Sprite(material);
+  sprite.scale.set(1.2, 1.2, 1.2);
+  return sprite;
+}
 
 /* ============================================================
    Load CSV
@@ -168,16 +197,20 @@ function init() {
       SPHERE_RADIUS * Math.cos(phi)
     );
 
-    const mesh = new THREE.Mesh(
+    const node = new THREE.Mesh(
       new THREE.SphereGeometry(NODE_RADIUS, 24, 24),
       new THREE.MeshBasicMaterial({ color: 0xffffff })
     );
 
-    mesh.position.copy(pos);
-    group.add(mesh);
-
-    nodes[name] = mesh;
+    node.position.copy(pos);
+    group.add(node);
+    nodes[name] = node;
     originalPositions[name] = pos.clone();
+
+    const label = makeLabel(name);
+    label.position.copy(pos).add(new THREE.Vector3(0, NODE_RADIUS + 0.35, 0));
+    group.add(label);
+    labels[name] = label;
   });
 
   pairKeys.forEach(k => {
@@ -277,10 +310,8 @@ function updateEdges(t) {
     if (d < best) { best = d; idx = i; }
   }
 
-  // DISPLAY IN REAL SECONDS
-  const seconds = timeValues[idx] / 10;
   document.getElementById("timeLabel").textContent =
-    `t = ${seconds.toFixed(2)} sec`;
+    `t = ${(timeValues[idx] / 10).toFixed(2)} sec`;
 
   pairKeys.forEach(k => {
     const v = rows[idx]?.[k];
@@ -336,7 +367,6 @@ function animate(now = performance.now()) {
   lastFrame = now;
 
   if (isPlaying && timeValues.length > 1) {
-    // IMPORTANT: ×10 because data is in tenths of seconds
     currentTime += direction * playSpeed * dt * 10;
 
     if (currentTime >= timeValues[timeValues.length - 1]) {
@@ -355,6 +385,14 @@ function animate(now = performance.now()) {
 
   group.quaternion.slerp(targetQuat, ANIM_SPEED);
   group.position.lerp(targetPos, ANIM_SPEED);
+
+  // label depth scaling (3D cue)
+  Object.keys(labels).forEach(k => {
+    const label = labels[k];
+    const d = camera.position.distanceTo(label.position);
+    const s = THREE.MathUtils.clamp(6 / d, 0.6, 1.4);
+    label.scale.set(s, s, s);
+  });
 
   renderer.render(scene, camera);
 }
