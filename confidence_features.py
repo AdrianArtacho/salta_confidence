@@ -74,7 +74,17 @@ for csv in glob.glob(os.path.join(P_IN, "*.csv")):
     print(f"\n[FEATURE] {modality}")
 
     df = pd.read_csv(csv)[["x_axis", "y_axis", "feature"]]
-    pivot = df.pivot(index="x_axis", columns="feature", values="y_axis").fillna(0)
+    pivot = (
+        df
+        .pivot_table(
+            index="x_axis",
+            columns="feature",
+            values="y_axis",
+            aggfunc="mean"   # important
+        )
+        .fillna(0)
+    )
+
 
     X = pivot.values
     feats = pivot.columns.astype(str).tolist()
