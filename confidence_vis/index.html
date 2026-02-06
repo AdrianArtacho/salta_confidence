@@ -18,10 +18,27 @@
     left: 50%;
     transform: translateX(-50%);
     width: 80%;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  #controls {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+  }
+  button {
+    background: #222;
+    color: #eee;
+    border: 1px solid #555;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  button:hover {
+    background: #333;
   }
   #timeLabel {
     text-align: center;
-    margin-bottom: 6px;
     font-size: 14px;
   }
 </style>
@@ -32,6 +49,9 @@
 <div id="ui">
   <div id="timeLabel">t = 0.00</div>
   <input id="timeSlider" type="range" min="0" max="1" step="0.001">
+  <div id="controls">
+    <button id="playBtn">▶ Play</button>
+  </div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
@@ -81,7 +101,7 @@ const FOCUS_DEPTH = 3.0;
 // node geometry
 const NODE_RADIUS = 0.22;
 
-// edge thickness (tuned)
+// edge thickness
 const EDGE_MIN = 0.015;
 const EDGE_MAX = 0.10;
 
@@ -91,8 +111,14 @@ const targetQuat = new THREE.Quaternion();
 const targetPos  = new THREE.Vector3();
 const IDENTITY_QUAT = new THREE.Quaternion();
 
+// time playback
+let currentTime = 0;
+let isPlaying = false;
+let direction = 1;        // +1 forward, -1 backward
+const playSpeed = 0.6;    // seconds per second (adjust freely)
+
 /* ============================================================
-   Load CSV (fallback-safe)
+   Load CSV
 ============================================================ */
 
 fetch("modality_agreement_timeseries.csv")
@@ -113,12 +139,14 @@ function parseCSV(text) {
   timeValues = rows.map(r => r.time);
   pairKeys = headers.filter(h => h !== "time");
   modalities = [...new Set(pairKeys.flatMap(k => k.split("__")))];
+  currentTime = timeValues[0];
 }
 
 function generateDummyData() {
   modalities = ["AUDIO", "MPIPE", "IMU", "VIDEO"];
-  timeValues = [0];
+  timeValues = [0, 1];
   pairKeys = [];
+  currentTime = 0;
 }
 
 /* ============================================================
@@ -127,7 +155,6 @@ function generateDummyData() {
 
 function init() {
 
-  /* ---------- Nodes (Fibonacci sphere) ---------- */
   modalities.forEach((name, i) => {
     const n = modalities.length;
     const phi = Math.acos(1 - 2 * (i + 0.5) / n);
@@ -151,7 +178,6 @@ function init() {
     originalPositions[name] = pos.clone();
   });
 
-  /* ---------- Edges (cylinders) ---------- */
   pairKeys.forEach(k => {
     const mat = new THREE.MeshBasicMaterial({
       color: 0x66ccff,
@@ -169,7 +195,7 @@ function init() {
 
   setupPicking();
   setupUI();
-  updateEdges(timeValues[0] || 0);
+  updateEdges(currentTime);
   animate();
 }
 
@@ -202,10 +228,7 @@ function toggleFocus(name) {
     targetPos.set(0, 0, 0);
     focused = null;
   } else {
-    const dir = originalPositions[name].clone();
-    if (dir.length() < 1e-6) return;
-    dir.normalize();
-
+    const dir = originalPositions[name].clone().normalize();
     targetQuat.copy(
       new THREE.Quaternion().setFromUnitVectors(dir, new THREE.Vector3(0, 0, 1))
     );
@@ -215,13 +238,12 @@ function toggleFocus(name) {
 }
 
 /* ============================================================
-   Edge geometry update (CORRECT, no gaps)
+   Edge geometry update
 ============================================================ */
 
 function updateEdgeCylinder(edge, p1, p2, thickness) {
   const dir = new THREE.Vector3().subVectors(p2, p1);
   const fullLen = dir.length();
-
   if (fullLen <= 2 * NODE_RADIUS) {
     edge.visible = false;
     return;
@@ -230,17 +252,12 @@ function updateEdgeCylinder(edge, p1, p2, thickness) {
   const usableLen = fullLen - 2 * NODE_RADIUS;
   dir.normalize();
 
-  // midpoint between node surfaces
   const mid = new THREE.Vector3()
     .copy(p1)
     .addScaledVector(dir, NODE_RADIUS + usableLen / 2);
 
   edge.position.copy(mid);
-
-  // IMPORTANT: scale.y = FULL usable length
   edge.scale.set(thickness, usableLen, thickness);
-
-  // orient cylinder (local Y → direction)
   edge.quaternion.setFromUnitVectors(
     new THREE.Vector3(0, 1, 0),
     dir
@@ -259,27 +276,19 @@ function updateEdges(t) {
   }
 
   document.getElementById("timeLabel").textContent =
-    `t = ${timeValues[idx]?.toFixed(2) ?? "0.00"}`;
+    `t = ${timeValues[idx].toFixed(2)}`;
 
   pairKeys.forEach(k => {
     const v = rows[idx]?.[k];
     const edge = edges[k];
-
-    if (!isFinite(v)) {
-      edge.visible = false;
-      return;
-    }
+    if (!isFinite(v)) { edge.visible = false; return; }
 
     edge.visible = true;
-
     const [a, b] = k.split("__");
-    const p1 = nodes[a].position;
-    const p2 = nodes[b].position;
-
     const thickness =
       EDGE_MIN + Math.pow(v, 1.3) * (EDGE_MAX - EDGE_MIN);
 
-    updateEdgeCylinder(edge, p1, p2, thickness);
+    updateEdgeCylinder(edge, nodes[a].position, nodes[b].position, thickness);
     edge.material.opacity = 0.15 + 0.85 * v;
   });
 }
@@ -289,20 +298,53 @@ function updateEdges(t) {
 ============================================================ */
 
 function setupUI() {
-  const s = document.getElementById("timeSlider");
-  if (!timeValues.length) return;
-  s.min = timeValues[0];
-  s.max = timeValues[timeValues.length - 1];
-  s.step = (s.max - s.min) / 1000;
-  s.addEventListener("input", () => updateEdges(parseFloat(s.value)));
+  const slider = document.getElementById("timeSlider");
+  const playBtn = document.getElementById("playBtn");
+
+  slider.min = timeValues[0];
+  slider.max = timeValues[timeValues.length - 1];
+  slider.step = (slider.max - slider.min) / 1000;
+  slider.value = currentTime;
+
+  slider.addEventListener("input", () => {
+    currentTime = parseFloat(slider.value);
+    isPlaying = false;
+    playBtn.textContent = "▶ Play";
+    updateEdges(currentTime);
+  });
+
+  playBtn.addEventListener("click", () => {
+    isPlaying = !isPlaying;
+    playBtn.textContent = isPlaying ? "⏸ Pause" : "▶ Play";
+  });
 }
 
 /* ============================================================
    Render loop
 ============================================================ */
 
-function animate() {
+let lastTime = performance.now();
+
+function animate(now = performance.now()) {
   requestAnimationFrame(animate);
+
+  const dt = (now - lastTime) / 1000;
+  lastTime = now;
+
+  if (isPlaying && timeValues.length > 1) {
+    currentTime += direction * playSpeed * dt;
+
+    if (currentTime >= timeValues[timeValues.length - 1]) {
+      currentTime = timeValues[timeValues.length - 1];
+      direction = -1;
+    } else if (currentTime <= timeValues[0]) {
+      currentTime = timeValues[0];
+      direction = 1;
+    }
+
+    document.getElementById("timeSlider").value = currentTime;
+    updateEdges(currentTime);
+  }
 
   if (!focused) group.rotation.y += 0.002;
 
