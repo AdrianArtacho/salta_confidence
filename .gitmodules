@@ -1,0 +1,3 @@
+[submodule "agreement"]
+	path = agreement
+	url = https://github.com/AdrianArtacho/agreement.git
