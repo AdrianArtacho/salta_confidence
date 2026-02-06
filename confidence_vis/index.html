@@ -115,16 +115,31 @@ const IDENTITY_QUAT = new THREE.Quaternion();
 let currentTime = 0;
 let isPlaying = false;
 let direction = 1;
-const playSpeed = 1.0;   // real seconds / second
+const playSpeed = 1.0;
 
 /* ============================================================
-   Modality label helper (YOUR RULE)
+   Modality label helpers
 ============================================================ */
 
 function modalityDisplayName(fullName) {
   const idx = fullName.lastIndexOf("_");
   if (idx === -1) return fullName;
   return fullName.slice(idx + 1);
+}
+
+function modalityColor(label) {
+  const l = label.toLowerCase();
+
+  if (l.includes("mpipe")) {
+    return new THREE.Color(0xffc0c0); // soft red
+  }
+  if (l.includes("audio")) {
+    return new THREE.Color(0xc0d8ff); // soft blue
+  }
+  if (l.includes("imu")) {
+    return new THREE.Color(0xc8f0c8); // soft green
+  }
+  return new THREE.Color(0xffffff);   // neutral
 }
 
 /* ============================================================
@@ -184,7 +199,7 @@ function parseCSV(text) {
 }
 
 function generateDummyData() {
-  modalities = ["exp5b_pdps_imu-Clip", "exp5b_mpipe-R"];
+  modalities = ["exp5b_pdps_imu-Clip", "exp5b_mpipe-R", "exp5b_audio-L"];
   timeValues = [0, 100];
   pairKeys = [];
   currentTime = 0;
@@ -207,9 +222,12 @@ function init() {
       SPHERE_RADIUS * Math.cos(phi)
     );
 
+    const labelText = modalityDisplayName(name);
+    const color = modalityColor(labelText);
+
     const node = new THREE.Mesh(
       new THREE.SphereGeometry(NODE_RADIUS, 24, 24),
-      new THREE.MeshBasicMaterial({ color: 0xffffff })
+      new THREE.MeshBasicMaterial({ color })
     );
 
     node.position.copy(pos);
@@ -217,8 +235,6 @@ function init() {
     nodes[name] = node;
     originalPositions[name] = pos.clone();
 
-    // <<< LABEL FIX HERE >>>
-    const labelText = modalityDisplayName(name);
     const label = makeLabel(labelText);
     label.position.copy(pos).add(new THREE.Vector3(0, NODE_RADIUS + 0.35, 0));
     group.add(label);
