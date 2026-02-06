@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>3D Modality Agreement (DEBUG SAFE)</title>
+<title>3D Modality Agreement</title>
 
 <style>
   body { margin: 0; overflow: hidden; background: #111; color: #eee; }
@@ -12,8 +12,13 @@
     left: 50%;
     transform: translateX(-50%);
     width: 80%;
+    font-family: sans-serif;
   }
-  #timeLabel { text-align: center; margin-bottom: 6px; }
+  #timeLabel {
+    text-align: center;
+    margin-bottom: 6px;
+    font-size: 14px;
+  }
 </style>
 </head>
 
@@ -34,9 +39,11 @@
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x111111);
 
-const camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 100);
+const camera = new THREE.PerspectiveCamera(
+  70, window.innerWidth / window.innerHeight, 0.1, 100
+);
 camera.position.set(0, 0, 7);
-camera.lookAt(0, 0, 0);   // ⭐ CRITICAL FIX
+camera.lookAt(0, 0, 0);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -49,13 +56,6 @@ window.addEventListener("resize", () => {
 });
 
 /* ============================================================
-   DEBUG HELPERS (TEMPORARY BUT IMPORTANT)
-============================================================ */
-
-// Axis helper so we ALWAYS see something
-scene.add(new THREE.AxesHelper(3));
-
-/* ============================================================
    Globals
 ============================================================ */
 
@@ -63,34 +63,33 @@ const group = new THREE.Group();
 scene.add(group);
 
 const nodes = {};
+const edges = {};
 const originalPositions = {};
 
-const SPHERE_RADIUS = 2.5;
+let rows = [], timeValues = [], pairKeys = [], modalities = [];
+let focused = null;
+
+// layout + interaction
+const SPHERE_RADIUS = 2.6;
+const FOCUS_DEPTH = 3.0;
+const ANIM_SPEED = 0.08;
+
+const targetQuat = new THREE.Quaternion();
+const targetPos  = new THREE.Vector3();
+const IDENTITY_QUAT = new THREE.Quaternion();
 
 /* ============================================================
-   SAFE DATA LOADING
+   Load CSV (with fallback)
 ============================================================ */
-
-let rows = [];
-let timeValues = [];
-let pairKeys = [];
-let modalities = [];
 
 fetch("modality_agreement_timeseries.csv")
   .then(r => {
     if (!r.ok) throw new Error("CSV not found");
     return r.text();
   })
-  .then(text => {
-    console.log("[CSV] Loaded successfully");
-    parseCSV(text);
-    init();
-  })
-  .catch(err => {
-    console.warn("[CSV] Failed to load, using dummy data", err);
-    generateDummyData();
-    init();
-  });
+  .then(text => parseCSV(text))
+  .catch(() => generateDummyData())
+  .finally(() => init());
 
 function parseCSV(text) {
   const lines = text.trim().split("\n");
@@ -109,15 +108,16 @@ function parseCSV(text) {
 function generateDummyData() {
   modalities = ["AUDIO", "MPIPE", "IMU", "VIDEO"];
   timeValues = [0];
+  pairKeys = [];
 }
 
 /* ============================================================
-   Init (NODES ONLY — KEEP SIMPLE)
+   Init
 ============================================================ */
 
 function init() {
-  console.log("[INIT] Creating nodes:", modalities);
 
+  /* ---------- Nodes (spherical layout) ---------- */
   modalities.forEach((name, i) => {
     const n = modalities.length;
     const phi = Math.acos(1 - 2 * (i + 0.5) / n);
@@ -130,8 +130,8 @@ function init() {
     );
 
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.3, 24, 24),
-      new THREE.MeshBasicMaterial({ color: 0xffcc00 }) // BRIGHT YELLOW
+      new THREE.SphereGeometry(0.22, 20, 20),
+      new THREE.MeshBasicMaterial({ color: 0xffffff })
     );
 
     mesh.position.copy(pos);
@@ -141,7 +141,107 @@ function init() {
     originalPositions[name] = pos.clone();
   });
 
+  /* ---------- Edges ---------- */
+  pairKeys.forEach(k => {
+    const [a, b] = k.split("__");
+    const geom = new THREE.BufferGeometry().setFromPoints([
+      nodes[a].position,
+      nodes[b].position
+    ]);
+    const mat = new THREE.LineBasicMaterial({
+      color: 0x66ccff,
+      transparent: true,
+      opacity: 0.15
+    });
+    const line = new THREE.Line(geom, mat);
+    group.add(line);
+    edges[k] = line;
+  });
+
+  targetQuat.copy(IDENTITY_QUAT);
+  targetPos.set(0, 0, 0);
+
+  setupPicking();
+  setupUI();
+  updateEdges(timeValues[0] || 0);
   animate();
+}
+
+/* ============================================================
+   Picking & Focus
+============================================================ */
+
+function setupPicking() {
+  const ray = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+
+  window.addEventListener("click", e => {
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+    ray.setFromCamera(mouse, camera);
+    const hits = ray.intersectObjects(Object.values(nodes));
+    if (!hits.length) return;
+
+    const clicked = Object.keys(nodes)
+      .find(k => nodes[k] === hits[0].object);
+
+    toggleFocus(clicked);
+  });
+}
+
+function toggleFocus(name) {
+  if (focused === name) {
+    targetQuat.copy(IDENTITY_QUAT);
+    targetPos.set(0, 0, 0);
+    focused = null;
+  } else {
+    const dir = originalPositions[name].clone();
+    if (dir.length() < 1e-6) return;
+    dir.normalize();
+
+    targetQuat.copy(
+      new THREE.Quaternion().setFromUnitVectors(dir, new THREE.Vector3(0, 0, 1))
+    );
+    targetPos.set(0, 0, -FOCUS_DEPTH);
+    focused = name;
+  }
+}
+
+/* ============================================================
+   Time / Edge updates
+============================================================ */
+
+function updateEdges(t) {
+  let idx = 0, best = Infinity;
+  for (let i = 0; i < timeValues.length; i++) {
+    const d = Math.abs(timeValues[i] - t);
+    if (d < best) { best = d; idx = i; }
+  }
+
+  document.getElementById("timeLabel").textContent =
+    `t = ${timeValues[idx]?.toFixed(2) ?? "0.00"}`;
+
+  pairKeys.forEach(k => {
+    const v = rows[idx]?.[k];
+    const e = edges[k];
+    if (!isFinite(v)) { e.visible = false; return; }
+    e.visible = true;
+    e.material.opacity = 0.1 + 0.8 * v;
+  });
+}
+
+/* ============================================================
+   UI
+============================================================ */
+
+function setupUI() {
+  const s = document.getElementById("timeSlider");
+  if (!timeValues.length) return;
+  s.min = timeValues[0];
+  s.max = timeValues[timeValues.length - 1];
+  s.step = (s.max - s.min) / 1000;
+  s.addEventListener("input", () => updateEdges(parseFloat(s.value)));
 }
 
 /* ============================================================
@@ -150,7 +250,13 @@ function init() {
 
 function animate() {
   requestAnimationFrame(animate);
-  group.rotation.y += 0.002; // slow rotation so you SEE depth
+
+  // gentle idle rotation (optional)
+  if (!focused) group.rotation.y += 0.002;
+
+  group.quaternion.slerp(targetQuat, ANIM_SPEED);
+  group.position.lerp(targetPos, ANIM_SPEED);
+
   renderer.render(scene, camera);
 }
 </script>
