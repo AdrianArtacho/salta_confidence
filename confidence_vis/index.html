@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Time-Resolved Modality Agreement</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      background: #111;
+      color: #eee;
+      font-family: sans-serif;
+    }
+    #ui {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 80%;
+    }
+    #timeLabel {
+      text-align: center;
+      margin-bottom: 6px;
+      font-size: 14px;
+    }
+    input[type=range] {
+      width: 100%;
+    }
+  </style>
+</head>
+
+<body>
+
+<div id="ui">
+  <div id="timeLabel">t = 0.00</div>
+  <input id="timeSlider" type="range" min="0" max="1" step="0.001" value="0">
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+
+<script>
+/* ============================================================
+   Scene
+============================================================ */
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x111111);
+
+const camera = new THREE.PerspectiveCamera(
+  60,
+  window.innerWidth / window.innerHeight,
+  0.1,
+  100
+);
+camera.position.set(0, 0, 10);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+window.addEventListener("resize", () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* ============================================================
+   Globals
+============================================================ */
+
+let modalities = [];
+let pairKeys = [];
+let rows = [];
+let timeValues = [];
+
+const nodeObjects = {};
+const edgeObjects = {};
+const originalPositions = {};
+
+let focusedNode = null;
+
+const NODE_RADIUS = 3.0;
+const Z_FOCUS = 2.5;
+const Z_BACKGROUND = 1.5;
+
+/* ============================================================
+   CSV Loading
+============================================================ */
+
+fetch("modality_agreement_timeseries.csv")
+  .then(r => r.text())
+  .then(parseCSV)
+  .then(initVis);
+
+function parseCSV(text) {
+  const lines = text.trim().split("\n");
+  const headers = lines[0].split(",");
+  rows = lines.slice(1).map(l => {
+    const p = l.split(",");
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = parseFloat(p[i]));
+    return obj;
+  });
+  return { headers, rows };
+}
+
+/* ============================================================
+   Init Visualization
+============================================================ */
+
+function initVis({ headers, rows }) {
+
+  timeValues = rows.map(r => r.time);
+  pairKeys = headers.filter(h => h !== "time");
+
+  modalities = Array.from(
+    new Set(pairKeys.flatMap(k => k.split("__")))
+  );
+
+  /* ---------------- Nodes ---------------- */
+
+  modalities.forEach((name, i) => {
+    const angle = i / modalities.length * Math.PI * 2;
+    const x = Math.cos(angle) * NODE_RADIUS;
+    const y = Math.sin(angle) * NODE_RADIUS;
+    const z = 0;
+
+    const geom = new THREE.SphereGeometry(0.18, 16, 16);
+    const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const mesh = new THREE.Mesh(geom, mat);
+
+    mesh.position.set(x, y, z);
+    scene.add(mesh);
+
+    nodeObjects[name] = mesh;
+    originalPositions[name] = mesh.position.clone();
+  });
+
+  /* ---------------- Edges ---------------- */
+
+  pairKeys.forEach(key => {
+    const [a, b] = key.split("__");
+    const pa = nodeObjects[a].position;
+    const pb = nodeObjects[b].position;
+
+    const geom = new THREE.BufferGeometry().setFromPoints([pa, pb]);
+    const mat = new THREE.LineBasicMaterial({
+      color: 0x66ccff,
+      transparent: true,
+      opacity: 0.15,
+      linewidth: 1
+    });
+
+    const line = new THREE.Line(geom, mat);
+    scene.add(line);
+
+    edgeObjects[key] = line;
+  });
+
+  /* ---------------- Slider ---------------- */
+
+  const slider = document.getElementById("timeSlider");
+  const label = document.getElementById("timeLabel");
+
+  slider.min = timeValues[0];
+  slider.max = timeValues[timeValues.length - 1];
+  slider.step = (slider.max - slider.min) / 1000;
+
+  slider.addEventListener("input", () => {
+    updateEdges(parseFloat(slider.value));
+  });
+
+  /* ---------------- Click Interaction ---------------- */
+
+  const raycaster = new THREE.Raycaster();
+  const mouse = new THREE.Vector2();
+
+  window.addEventListener("click", e => {
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+
+    raycaster.setFromCamera(mouse, camera);
+    const hits = raycaster.intersectObjects(Object.values(nodeObjects));
+
+    if (hits.length > 0) {
+      const mesh = hits[0].object;
+      const name = Object.keys(nodeObjects)
+        .find(k => nodeObjects[k] === mesh);
+      toggleFocus(name);
+    }
+  });
+
+  /* ---------------- Initial draw ---------------- */
+
+  updateEdges(timeValues[0]);
+
+  animate();
+}
+
+/* ============================================================
+   Update Functions
+============================================================ */
+
+function updateEdges(t) {
+
+  let idx = 0;
+  let best = Infinity;
+  for (let i = 0; i < timeValues.length; i++) {
+    const d = Math.abs(timeValues[i] - t);
+    if (d < best) {
+      best = d;
+      idx = i;
+    }
+  }
+
+  const row = rows[idx];
+  document.getElementById("timeLabel").textContent =
+    `t = ${row.time.toFixed(2)}`;
+
+  pairKeys.forEach(key => {
+    const val = row[key];
+    const line = edgeObjects[key];
+
+    if (!isFinite(val)) {
+      line.visible = false;
+      return;
+    }
+
+    line.visible = true;
+    line.material.linewidth = 0.5 + 6 * val;
+    line.material.opacity = 0.1 + 0.8 * val;
+  });
+}
+
+function updateEdgeGeometry() {
+  pairKeys.forEach(key => {
+    const [a, b] = key.split("__");
+    const line = edgeObjects[key];
+    line.geometry.setFromPoints([
+      nodeObjects[a].position,
+      nodeObjects[b].position
+    ]);
+    line.geometry.attributes.position.needsUpdate = true;
+  });
+}
+
+/* ============================================================
+   Focus Logic
+============================================================ */
+
+function toggleFocus(name) {
+  if (focusedNode === name) {
+    resetLayout();
+    focusedNode = null;
+  } else {
+    focusOn(name);
+    focusedNode = name;
+  }
+}
+
+function focusOn(name) {
+  const center = originalPositions[name];
+
+  modalities.forEach(m => {
+    const node = nodeObjects[m];
+    const orig = originalPositions[m];
+
+    const dx = orig.x - center.x;
+    const dy = orig.y - center.y;
+
+    if (m === name) {
+      node.position.set(0, 0, -Z_FOCUS);
+    } else {
+      node.position.set(dx, dy, -Z_BACKGROUND);
+    }
+  });
+
+  updateEdgeGeometry();
+}
+
+function resetLayout() {
+  modalities.forEach(m => {
+    nodeObjects[m].position.copy(originalPositions[m]);
+  });
+  updateEdgeGeometry();
+}
+
+/* ============================================================
+   Render loop
+============================================================ */
+
+function animate() {
+  requestAnimationFrame(animate);
+  renderer.render(scene, camera);
+}
+</script>
+
+</body>
+</html>
