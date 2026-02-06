@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Time-Resolved Modality Agreement</title>
+  <title>Time-Resolved Modality Agreement (3D)</title>
   <style>
     body {
       margin: 0;
@@ -40,14 +40,14 @@
 
 <script>
 /* ============================================================
-   Scene
+   Scene setup
 ============================================================ */
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x111111);
 
 const camera = new THREE.PerspectiveCamera(
-  60,
+  70,  // slightly wider FOV for depth
   window.innerWidth / window.innerHeight,
   0.1,
   100
@@ -80,11 +80,10 @@ const originalPositions = {};
 let focusedNode = null;
 
 const NODE_RADIUS = 3.0;
-const Z_FOCUS = 2.5;
-const Z_BACKGROUND = 1.5;
+const Z_FOCUS = 3.0;
 
 /* ============================================================
-   CSV Loading
+   Load CSV
 ============================================================ */
 
 fetch("modality_agreement_timeseries.csv")
@@ -125,7 +124,7 @@ function initVis({ headers, rows }) {
     const y = Math.sin(angle) * NODE_RADIUS;
     const z = 0;
 
-    const geom = new THREE.SphereGeometry(0.18, 16, 16);
+    const geom = new THREE.SphereGeometry(0.2, 20, 20);
     const mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
     const mesh = new THREE.Mesh(geom, mat);
 
@@ -140,10 +139,12 @@ function initVis({ headers, rows }) {
 
   pairKeys.forEach(key => {
     const [a, b] = key.split("__");
-    const pa = nodeObjects[a].position;
-    const pb = nodeObjects[b].position;
 
-    const geom = new THREE.BufferGeometry().setFromPoints([pa, pb]);
+    const geom = new THREE.BufferGeometry().setFromPoints([
+      nodeObjects[a].position,
+      nodeObjects[b].position
+    ]);
+
     const mat = new THREE.LineBasicMaterial({
       color: 0x66ccff,
       transparent: true,
@@ -190,19 +191,15 @@ function initVis({ headers, rows }) {
     }
   });
 
-  /* ---------------- Initial draw ---------------- */
-
   updateEdges(timeValues[0]);
-
   animate();
 }
 
 /* ============================================================
-   Update Functions
+   Updates
 ============================================================ */
 
 function updateEdges(t) {
-
   let idx = 0;
   let best = Infinity;
   for (let i = 0; i < timeValues.length; i++) {
@@ -235,17 +232,16 @@ function updateEdges(t) {
 function updateEdgeGeometry() {
   pairKeys.forEach(key => {
     const [a, b] = key.split("__");
-    const line = edgeObjects[key];
-    line.geometry.setFromPoints([
+    edgeObjects[key].geometry.setFromPoints([
       nodeObjects[a].position,
       nodeObjects[b].position
     ]);
-    line.geometry.attributes.position.needsUpdate = true;
+    edgeObjects[key].geometry.attributes.position.needsUpdate = true;
   });
 }
 
 /* ============================================================
-   Focus Logic
+   Focus Logic (TRUE 3D)
 ============================================================ */
 
 function toggleFocus(name) {
@@ -267,11 +263,12 @@ function focusOn(name) {
 
     const dx = orig.x - center.x;
     const dy = orig.y - center.y;
+    const dz = orig.z - center.z;
 
     if (m === name) {
       node.position.set(0, 0, -Z_FOCUS);
     } else {
-      node.position.set(dx, dy, -Z_BACKGROUND);
+      node.position.set(dx, dy, dz - Z_FOCUS);
     }
   });
 
