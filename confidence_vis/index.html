@@ -118,6 +118,16 @@ let direction = 1;
 const playSpeed = 1.0;   // real seconds / second
 
 /* ============================================================
+   Modality label helper (YOUR RULE)
+============================================================ */
+
+function modalityDisplayName(fullName) {
+  const idx = fullName.lastIndexOf("_");
+  if (idx === -1) return fullName;
+  return fullName.slice(idx + 1);
+}
+
+/* ============================================================
    Label helper
 ============================================================ */
 
@@ -174,7 +184,7 @@ function parseCSV(text) {
 }
 
 function generateDummyData() {
-  modalities = ["AUDIO", "MPIPE", "IMU", "VIDEO"];
+  modalities = ["exp5b_pdps_imu-Clip", "exp5b_mpipe-R"];
   timeValues = [0, 100];
   pairKeys = [];
   currentTime = 0;
@@ -207,7 +217,9 @@ function init() {
     nodes[name] = node;
     originalPositions[name] = pos.clone();
 
-    const label = makeLabel(name);
+    // <<< LABEL FIX HERE >>>
+    const labelText = modalityDisplayName(name);
+    const label = makeLabel(labelText);
     label.position.copy(pos).add(new THREE.Vector3(0, NODE_RADIUS + 0.35, 0));
     group.add(label);
     labels[name] = label;
@@ -386,9 +398,8 @@ function animate(now = performance.now()) {
   group.quaternion.slerp(targetQuat, ANIM_SPEED);
   group.position.lerp(targetPos, ANIM_SPEED);
 
-  // label depth scaling (3D cue)
-  Object.keys(labels).forEach(k => {
-    const label = labels[k];
+  // label depth scaling
+  Object.values(labels).forEach(label => {
     const d = camera.position.distanceTo(label.position);
     const s = THREE.MathUtils.clamp(6 / d, 0.6, 1.4);
     label.scale.set(s, s, s);
