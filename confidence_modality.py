@@ -98,7 +98,16 @@ for csv in glob.glob(os.path.join(P_IN, "*.csv")):
     wdf = pd.read_csv(os.path.join(P_IN, f"weights_{name}.csv"))
     weights = dict(zip(wdf["feature_name"], wdf["weight_value"]))
 
-    pivot = df.pivot(index="x_axis", columns="feature", values="y_axis").fillna(0)
+    pivot = (
+        df
+        .pivot_table(
+            index="x_axis",
+            columns="feature",
+            values="y_axis",
+            aggfunc="mean"   # or "sum", see below
+        )
+        .fillna(0)
+    )
     for col in pivot.columns:
         pivot[col] *= weights.get(col, 1.0)
 
