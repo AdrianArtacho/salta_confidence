@@ -2,16 +2,10 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Time-Resolved Modality Agreement (3D)</title>
+<title>3D Modality Agreement (DEBUG SAFE)</title>
 
 <style>
-  body {
-    margin: 0;
-    overflow: hidden;
-    background: #111;
-    color: #eee;
-    font-family: sans-serif;
-  }
+  body { margin: 0; overflow: hidden; background: #111; color: #eee; }
   #ui {
     position: absolute;
     bottom: 20px;
@@ -19,14 +13,7 @@
     transform: translateX(-50%);
     width: 80%;
   }
-  #timeLabel {
-    text-align: center;
-    margin-bottom: 6px;
-    font-size: 14px;
-  }
-  input[type=range] {
-    width: 100%;
-  }
+  #timeLabel { text-align: center; margin-bottom: 6px; }
 </style>
 </head>
 
@@ -41,16 +28,15 @@
 
 <script>
 /* ============================================================
-   Scene & Camera
+   Scene / Camera / Renderer
 ============================================================ */
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x111111);
 
-const camera = new THREE.PerspectiveCamera(
-  70, window.innerWidth / window.innerHeight, 0.1, 100
-);
+const camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.1, 100);
 camera.position.set(0, 0, 7);
+camera.lookAt(0, 0, 0);   // ⭐ CRITICAL FIX
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -63,62 +49,74 @@ window.addEventListener("resize", () => {
 });
 
 /* ============================================================
-   Globals
+   DEBUG HELPERS (TEMPORARY BUT IMPORTANT)
 ============================================================ */
 
-let rows = [], timeValues = [], pairKeys = [], modalities = [];
+// Axis helper so we ALWAYS see something
+scene.add(new THREE.AxesHelper(3));
+
+/* ============================================================
+   Globals
+============================================================ */
 
 const group = new THREE.Group();
 scene.add(group);
 
 const nodes = {};
-const edges = {};
 const originalPositions = {};
 
-let focused = null;
-
-// layout + depth
-const SPHERE_RADIUS = 2.6;
-const FOCUS_DEPTH = 3.0;
-const RADIAL_SPREAD = 0.8;
-
-// scaling
-const SCALE_FOCUS = 2.8;
-const SCALE_FAR = 0.4;
-
-// animation
-const ANIM_SPEED = 0.08;
-
-/* animation state */
-let targetQuat = new THREE.Quaternion();
-let targetPos = new THREE.Vector3();
+const SPHERE_RADIUS = 2.5;
 
 /* ============================================================
-   Load CSV
+   SAFE DATA LOADING
 ============================================================ */
 
+let rows = [];
+let timeValues = [];
+let pairKeys = [];
+let modalities = [];
+
 fetch("modality_agreement_timeseries.csv")
-  .then(r => r.text())
+  .then(r => {
+    if (!r.ok) throw new Error("CSV not found");
+    return r.text();
+  })
   .then(text => {
-    const lines = text.trim().split("\n");
-    const headers = lines[0].split(",");
-    rows = lines.slice(1).map(l => {
-      const p = l.split(",");
-      const o = {};
-      headers.forEach((h, i) => o[h] = parseFloat(p[i]));
-      return o;
-    });
-    timeValues = rows.map(r => r.time);
-    pairKeys = headers.filter(h => h !== "time");
-    modalities = [...new Set(pairKeys.flatMap(k => k.split("__")))];
+    console.log("[CSV] Loaded successfully");
+    parseCSV(text);
+    init();
+  })
+  .catch(err => {
+    console.warn("[CSV] Failed to load, using dummy data", err);
+    generateDummyData();
     init();
   });
 
+function parseCSV(text) {
+  const lines = text.trim().split("\n");
+  const headers = lines[0].split(",");
+  rows = lines.slice(1).map(l => {
+    const p = l.split(",");
+    const o = {};
+    headers.forEach((h, i) => o[h] = parseFloat(p[i]));
+    return o;
+  });
+  timeValues = rows.map(r => r.time);
+  pairKeys = headers.filter(h => h !== "time");
+  modalities = [...new Set(pairKeys.flatMap(k => k.split("__")))];
+}
+
+function generateDummyData() {
+  modalities = ["AUDIO", "MPIPE", "IMU", "VIDEO"];
+  timeValues = [0];
+}
+
 /* ============================================================
-   Init
+   Init (NODES ONLY — KEEP SIMPLE)
 ============================================================ */
 
 function init() {
+  console.log("[INIT] Creating nodes:", modalities);
 
   modalities.forEach((name, i) => {
     const n = modalities.length;
@@ -132,149 +130,27 @@ function init() {
     );
 
     const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.22, 20, 20),
-      new THREE.MeshBasicMaterial({ color: 0xffffff })
+      new THREE.SphereGeometry(0.3, 24, 24),
+      new THREE.MeshBasicMaterial({ color: 0xffcc00 }) // BRIGHT YELLOW
     );
 
     mesh.position.copy(pos);
-    mesh.scale.setScalar(1);
     group.add(mesh);
 
     nodes[name] = mesh;
     originalPositions[name] = pos.clone();
   });
 
-  pairKeys.forEach(k => {
-    const [a, b] = k.split("__");
-    const geom = new THREE.BufferGeometry().setFromPoints([
-      nodes[a].position,
-      nodes[b].position
-    ]);
-    const mat = new THREE.LineBasicMaterial({
-      color: 0x66ccff,
-      transparent: true,
-      opacity: 0.15
-    });
-    const line = new THREE.Line(geom, mat);
-    group.add(line);
-    edges[k] = line;
-  });
-
-  targetQuat.copy(group.quaternion);
-  targetPos.copy(group.position);
-
-  setupUI();
-  setupPicking();
-  updateEdges(timeValues[0]);
   animate();
 }
 
 /* ============================================================
-   Picking
-============================================================ */
-
-function setupPicking() {
-  const ray = new THREE.Raycaster();
-  const mouse = new THREE.Vector2();
-
-  window.addEventListener("click", e => {
-    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
-    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-    ray.setFromCamera(mouse, camera);
-
-    const hits = ray.intersectObjects(Object.values(nodes));
-    if (!hits.length) return;
-
-    const clicked = Object.keys(nodes)
-      .find(k => nodes[k] === hits[0].object);
-
-    toggleFocus(clicked);
-  });
-}
-
-/* ============================================================
-   Focus logic (animated + anti-occlusion)
-============================================================ */
-
-function toggleFocus(name) {
-  if (focused === name) {
-    resetView();
-    focused = null;
-  } else {
-    focusOn(name);
-    focused = name;
-  }
-}
-
-function focusOn(name) {
-  const center = originalPositions[name].clone().normalize();
-  const forward = new THREE.Vector3(0, 0, 1);
-
-  targetQuat.setFromUnitVectors(center, forward);
-  targetPos.set(0, 0, -FOCUS_DEPTH);
-
-  modalities.forEach(m => {
-    const node = nodes[m];
-    const dir = originalPositions[m].clone().normalize();
-    const angle = dir.angleTo(center);
-
-    const spread = RADIAL_SPREAD * angle;
-    node.userData.targetScale =
-      (m === name) ? SCALE_FOCUS : Math.max(SCALE_FAR, 1 - spread);
-  });
-}
-
-function resetView() {
-  targetQuat.identity();
-  targetPos.set(0, 0, 0);
-
-  modalities.forEach(m => {
-    nodes[m].userData.targetScale = 1.0;
-  });
-}
-
-/* ============================================================
-   Time updates
-============================================================ */
-
-function updateEdges(t) {
-  let idx = 0, best = Infinity;
-  for (let i = 0; i < timeValues.length; i++) {
-    const d = Math.abs(timeValues[i] - t);
-    if (d < best) { best = d; idx = i; }
-  }
-
-  document.getElementById("timeLabel").textContent =
-    `t = ${rows[idx].time.toFixed(2)}`;
-
-  pairKeys.forEach(k => {
-    const v = rows[idx][k];
-    const e = edges[k];
-    if (!isFinite(v)) { e.visible = false; return; }
-    e.visible = true;
-    e.material.opacity = 0.1 + 0.8 * v;
-  });
-}
-
-/* ============================================================
-   Animation loop
+   Render loop
 ============================================================ */
 
 function animate() {
   requestAnimationFrame(animate);
-
-  group.quaternion.slerp(targetQuat, ANIM_SPEED);
-  group.position.lerp(targetPos, ANIM_SPEED);
-
-  modalities.forEach(m => {
-    const node = nodes[m];
-    const ts = node.userData.targetScale || 1.0;
-    node.scale.lerp(
-      new THREE.Vector3(ts, ts, ts),
-      ANIM_SPEED
-    );
-  });
-
+  group.rotation.y += 0.002; // slow rotation so you SEE depth
   renderer.render(scene, camera);
 }
 </script>
