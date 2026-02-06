@@ -47,7 +47,7 @@
 <body>
 
 <div id="ui">
-  <div id="timeLabel">t = 0.00</div>
+  <div id="timeLabel">t = 0.00 sec</div>
   <input id="timeSlider" type="range" min="0" max="1" step="0.001">
   <div id="controls">
     <button id="playBtn">▶ Play</button>
@@ -114,8 +114,10 @@ const IDENTITY_QUAT = new THREE.Quaternion();
 // time playback
 let currentTime = 0;
 let isPlaying = false;
-let direction = 1;        // +1 forward, -1 backward
-const playSpeed = 0.6;    // seconds per second (adjust freely)
+let direction = 1;
+
+// IMPORTANT: playSpeed is now REAL seconds per second
+const playSpeed = 1.0;   // 1.0 = real time
 
 /* ============================================================
    Load CSV
@@ -144,7 +146,7 @@ function parseCSV(text) {
 
 function generateDummyData() {
   modalities = ["AUDIO", "MPIPE", "IMU", "VIDEO"];
-  timeValues = [0, 1];
+  timeValues = [0, 100];
   pairKeys = [];
   currentTime = 0;
 }
@@ -275,8 +277,10 @@ function updateEdges(t) {
     if (d < best) { best = d; idx = i; }
   }
 
+  // DISPLAY IN REAL SECONDS
+  const seconds = timeValues[idx] / 10;
   document.getElementById("timeLabel").textContent =
-    `t = ${timeValues[idx].toFixed(2)}`;
+    `t = ${seconds.toFixed(2)} sec`;
 
   pairKeys.forEach(k => {
     const v = rows[idx]?.[k];
@@ -323,16 +327,17 @@ function setupUI() {
    Render loop
 ============================================================ */
 
-let lastTime = performance.now();
+let lastFrame = performance.now();
 
 function animate(now = performance.now()) {
   requestAnimationFrame(animate);
 
-  const dt = (now - lastTime) / 1000;
-  lastTime = now;
+  const dt = (now - lastFrame) / 1000;
+  lastFrame = now;
 
   if (isPlaying && timeValues.length > 1) {
-    currentTime += direction * playSpeed * dt;
+    // IMPORTANT: ×10 because data is in tenths of seconds
+    currentTime += direction * playSpeed * dt * 10;
 
     if (currentTime >= timeValues[timeValues.length - 1]) {
       currentTime = timeValues[timeValues.length - 1];
