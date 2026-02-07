@@ -95,7 +95,7 @@ time,modA__modB,modA__modC,modB__modC
 
 This script is designed to feed:
 
-* the **3D Modality Agreement Explorer** (`index.html`)
+* the **3D Modality Agreement Explorer** ([`index.html`](https://adrianartacho.github.io/agreement/))
 * exploratory analysis of **temporal coordination regimes**
 * artistic-research workflows where *when* modalities align matters more than *how much overall*
 
